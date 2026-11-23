@@ -1,0 +1,66 @@
+Prices (Haiku 5.5, $/M tokens): input 0.10 | cache write 0.125 | cache read 0.01 | output 0.50
+
+=== no_cache  (mode=off, 7 API calls)
+  call  uncached   write    read  output     cost $
+     1       891       0       0      26   0.000102
+     2       954       0       0      19   0.000105
+     3       999       0       0      97   0.000148
+     4      1590       0       0     214   0.000266
+     5      1851       0       0      50   0.000210
+     6      1912       0       0      73   0.000228
+     7      2022       0       0      13   0.000209
+  input tokens: 10219 total, 0 read from cache (0%)
+  cost: $0.001268   (same tokens with no caching: $0.001268)
+
+=== system_only  (mode=system, 7 API calls)
+  call  uncached   write    read  output     cost $
+     1        82     809       0      26   0.000122
+     2       145       0     809      19   0.000032
+     3       190       0     809      55   0.000055
+     4       739       0     809     244   0.000204
+     5      1030       0     809      50   0.000136
+     6      1091       0     809     117   0.000176
+     7      1245       0     809      13   0.000139
+  input tokens: 10185 total, 4854 read from cache (48%)
+  cost: $0.000864   (same tokens with no caching: $0.001280)
+
+=== full  (mode=full, 7 API calls)
+  call  uncached   write    read  output     cost $
+     1         4     888       0      26   0.000124
+     2         2      65     888      19   0.000027
+     3         4      43     953      83   0.000057
+     4         2     579     996     222   0.000194
+     5         2     269    1575      38   0.000069
+     6         4      47    1844      85   0.000067
+     7         2     124    1891      12   0.000041
+  input tokens: 10182 total, 8147 read from cache (80%)
+  cost: $0.000578   (same tokens with no caching: $0.001261)
+
+=== cross_user  (mode=full, 4 API calls)
+  call  uncached   write    read  output     cost $
+     1         4      89     810      85   0.000062
+     2         2     472     899     461   0.000299
+     3         4     484    1371     190   0.000170
+     4         4     216    1855     202   0.000147
+  input tokens: 6210 total, 4935 read from cache (79%)
+  cost: $0.000677   (same tokens with no caching: $0.001090)
+
+=== busted  (mode=busted, 7 API calls)
+  call  uncached   write    read  output     cost $
+     1         4     909       0      26   0.000127
+     2         2     974       0      19   0.000131
+     3         4    1017       0      82   0.000169
+     4         2    1595       0     216   0.000308
+     5         2    1858       0      39   0.000252
+     6         4    1906       0      88   0.000283
+     7         2    2033       0      13   0.000261
+  input tokens: 10312 total, 0 read from cache (0%)
+  cost: $0.001530   (same tokens with no caching: $0.001273)
+
+=== COMPARISON
+  experiment   mode    calls     input   cached      cost $   vs none
+  no_cache     off         7     10219       0%    0.001268       +0%
+  system_only  system      7     10185      48%    0.000864      -33%
+  full         full        7     10182      80%    0.000578      -54%
+  cross_user   full        4      6210      79%    0.000677      -38%
+  busted       busted      7     10312       0%    0.001530      +20%

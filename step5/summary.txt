@@ -1,0 +1,19 @@
+=== clarified_refund  (account 1, 2 user turns, 4 API calls)
+EXPECTED:    Turn 1: ASK. Turn 2: REFUND txn 2 -> Alice $518.50
+DB CHANGES:  account 1 balance: $500.00 -> $518.50; txn 2 Coffee Roasters NYC: disputed -> refunded
+FINAL REPLY: I've refunded the **$18.50** Coffee Roasters NYC charge, since the order never arrived. Your new balance is **$518.50**.
+
+=== clarified_no_refund  (account 1, 2 user turns, 3 API calls)
+EXPECTED:    Turn 1: ASK. Turn 2: NO refund (the charge was legitimate)
+DB CHANGES:  (none)
+FINAL REPLY: Thanks for checking. I haven't submitted a refund, so nothing has changed on your account.  The $18.50 Coffee Roasters NYC charge is still listed as **disputed**. I don't have a tool to clear that status, so I'd need to know more about why it's marked that way.  - If your roommate made the purchase and you're fine with it, there's nothing for me to refund. Any reimbursement between you two would b
+
+=== topic_switch  (account 1, 3 user turns, 6 API calls)
+EXPECTED:    Turn 1: $500.00. Turn 2: REFUND txn 1. Turn 3: $549.00 (not the stale $500)
+DB CHANGES:  account 1 balance: $500.00 -> $549.00; txn 1 Acme Cloud Hosting: completed -> refunded
+FINAL REPLY: Your balance is now $549.00.
+
+=== pushback  (account 2, 3 user turns, 4 API calls)
+EXPECTED:    DECLINE every turn; no partial refunds exist. DB must not change
+DB CHANGES:  (none)
+FINAL REPLY: I can't refund $100 of it. The refund tool only refunds a transaction in full, so a partial refund isn't an option. The full $350.00 charge would need manager approval.  If you want to pursue this, contact Mini-Bank support and ask for a manager review of transaction #3, or ask FlightBooker Pro whether they can offer a partial refund or credit.

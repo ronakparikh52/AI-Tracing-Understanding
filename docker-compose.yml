@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: mini-bank-db
+    environment:
+      POSTGRES_USER: bank
+      POSTGRES_PASSWORD: bankpassword
+      POSTGRES_DB: minibank
+    ports:
+      - "5433:5432"   # host 5433 -> container 5432 (your local Postgres owns 5432)
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Runs only on first init (empty volume). Re-seed: docker compose down -v
+      - ./seed.sql:/docker-entrypoint-initdb.d/seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bank -d minibank"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
