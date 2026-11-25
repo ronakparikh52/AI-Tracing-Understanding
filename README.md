@@ -38,16 +38,16 @@ before refunding an ambiguous dispute.
 |---|---|
 | `docker-compose.yml` | Postgres 16 on **localhost:5433** (5433 so it won't clash with a local Postgres) |
 | `seed.sql` | Schema + seed data, loaded automatically on first boot |
-| `db.py` | Tiny DB helper: `query()`, `execute()`, `reset_db()`, and (step 7) template-DB branching |
-| `common.py` | `save_output()` (mirror prints to a `.txt`), `JsonlLog` (raw JSON log), and (step 7) `Tracer` for spans |
+| `db.py` | Tiny DB helper: `query()`, `execute()`, `reset_db()`, and (step 7) template-DB branching; (step 7b) the active DB is a `ContextVar`, so each thread talks to its own branch |
+| `common.py` | `save_output()` (mirror prints to a `.txt`), `JsonlLog` (raw JSON log), and (step 7) `Tracer` for spans; (step 7b) thread-safe: locks around file writes, a per-thread span stack |
 
 ---
 
 ## Setup
 
 Requirements: Docker (or Colima), Python 3.10+, and an Anthropic API key
-(Console credits — a full run of every step costs a few dollars at most, most of
-it step 7's Sonnet comparison).
+(Console credits — a full run of every step costs a few dollars at most:
+step 7b ≈ $0.40, step 8 ≈ $0.70).
 
 ```bash
 # 1. Start the bank
@@ -64,7 +64,7 @@ pip install -r requirements.txt
 python step1/agent.py
 ```
 
-Models: steps use `claude-haiku-5-5` (cheap); step 7 also compares
+Models: steps use `claude-haiku-5-5` (cheap); steps 7/7b also compare
 `claude-sonnet-5-5`.
 
 ---
@@ -167,7 +167,74 @@ automatically.
 
 ```bash
 python step7/agent.py --models haiku --n 2 flight   # cheap smoke test
-python step7/agent.py                               # full run (~$2, ~30-45 min)
+```
+
+Step 7 runs one conversation at a time, and the full run was **stopped
+partway** — it was going to take ~25 minutes. Its saved outputs (`run.txt`,
+`traces.jsonl`, `api_calls.jsonl`) are from that partial run. The traces showed
+why it was slow: ~97% of each run is waiting on the API (~1.6 s per call vs ~32 ms
+per tool). The full results come from step 7b.
+
+### Step 7b — the same eval, run in parallel
+`step7b/agent.py` · outputs: `summary.txt`, `failures.txt`, `traces.jsonl`, `api_calls.jsonl`, `run.txt`
+
+Identical scenarios and grading; runs execute **10 at a time** with a
+`ThreadPoolExecutor`. Threads fit here because the work is I/O-bound (waiting on
+HTTP), so Python's GIL isn't a bottleneck. What had to change to make it safe:
+- **No shared mutable globals** — the model and its prices are passed down
+  explicitly instead of living in module-level variables.
+- **Per-thread state via `ContextVar`** — each thread has its own active DB
+  branch (`db.py`) and its own span stack (`Tracer`), so parallel runs never
+  become each other's parent spans or write to each other's database.
+- **Locks** around shared files (`JsonlLog`, `traces.jsonl`) and around
+  `CREATE DATABASE … TEMPLATE` (Postgres refuses concurrent clones of one template).
+- **Retries** — `anthropic.Anthropic(max_retries=8)` backs off on 429 rate limits.
+
+**Results:** 275/275 runs passed (Haiku ×20 and Sonnet ×5 on all 11 scenarios),
+pass^5 = 100% everywhere. ~9.5× faster than sequential (153 s wall-clock vs
+1,458 s of summed run time). Haiku cost $0.09 for 220 runs; Sonnet $0.31 for 55 —
+**~12× more per run at equal accuracy**. None of the attacks even reached the
+code guardrails: the model refused first. 0 failures in 20 runs still only
+bounds the failure rate at roughly 3/20 (the "rule of three"), so more runs
+would be needed to claim real reliability.
+
+```bash
+python step7b/agent.py                              # full run (~$0.40, ~3 min)
+python step7b/agent.py --models haiku --workers 5 flight
+```
+
+### Step 8 — context rot
+`step8/agent.py` · outputs: `summary.txt`, `failures.txt`, `traces.jsonl`, `api_calls.jsonl`, `run.txt`
+
+Does the agent forget its rules when a long history sits in front of the
+request? Each run starts with a fake history of earlier support chats with the
+same customer — realistic filler plus **distractors** (old assistant messages
+that contradict today's policy, e.g. "refunds up to $500 are automatic"). Sizes
+are measured with the free `count_tokens` endpoint. Three variables:
+
+| Variable | Values |
+|---|---|
+| History size | 0, ~20K, ~75K tokens (kept under Haiku's 100K price jump) |
+| Where the rules live | `tool` — fetched via `get_refund_policies`, landing at the fresh end of the context; `system` — only in the system prompt, buried under the history |
+| Strategy | `full` (send everything) or `trim` (sliding window: keep the last 4 real user turns, cutting only where `tool_use`/`tool_result` pairs stay intact) |
+
+Two grades per run: **outcome** (DB end state right) and **judgment** (outcome
+right *and* the model never tried a refund the code had to block — guardrails can
+hide rot, so this checks whether the model itself still knows the rules). The
+padding has its own cache breakpoint, so 98% of input tokens were cache reads.
+
+**Results (Haiku, 420 runs, $0.69):** 419/420 passed. **No rule-following rot
+at ~77K tokens** in either placement, and zero blocked refund attempts. The single
+failure (`system_75k` / `topic_switch`) was over-caution: the model "corrected"
+the distractor history and then asked for confirmation instead of refunding.
+Long context still cost: latency per call grew ~1.9 s → 2.2 s → 2.8 s and cost
+per run ~8×. Trimming brought cost back down 5× ($0.0034 → $0.0007 per run) with
+no accuracy loss — the trade-off is that the trimmed prefix shifts every turn, so
+the message part of the cache keeps getting rewritten.
+
+```bash
+python step8/agent.py                                      # all conditions, Haiku (~$0.70)
+python step8/agent.py --n 2 --conditions tool_0k,system_75k flight
 ```
 
 ---
@@ -183,9 +250,9 @@ python step7/agent.py                               # full run (~$2, ~30-45 min)
 | Multi-turn state, context growth | step 5 |
 | Prompt caching / KV-cache reuse, cost | step 6 |
 | Non-determinism, evals, pass^k, tracing, DB branching | step 7 |
+| Parallelism: threads, `ContextVar`, locks, retries | step 7b |
+| Context rot, distractors, policy placement, trimming vs caching | step 8 |
 
 ## Roadmap
-- **Step 8 — context rot:** pad long histories until the agent forgets its
-  policies, then fix it with trimming / summarization.
 - **Step 9 — real tracing:** swap the hand-rolled tracer for OpenTelemetry and
   send spans to a backend.

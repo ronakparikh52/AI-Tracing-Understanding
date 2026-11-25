@@ -1,9 +1,11 @@
 """Shared helpers for the step scripts."""
 import json
 import sys
+import threading
 import time
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 
@@ -57,10 +59,13 @@ class JsonlLog:
     def __init__(self, path: Path):
         self.path = path
         self.path.write_text("")  # start fresh each run
+        self._lock = threading.Lock()  # parallel runs write to the same file
 
     def write(self, record: dict) -> None:
-        with self.path.open("a") as f:
-            f.write(json.dumps(record, default=_jsonable) + "\n")
+        line = json.dumps(record, default=_jsonable) + "\n"
+        with self._lock:  # one writer at a time -> lines never interleave
+            with self.path.open("a") as f:
+                f.write(line)
 
 
 # --- Step 7: span tracing ----------------------------------------------------
@@ -72,7 +77,11 @@ class Tracer:
     def __init__(self, path: Path):
         self.path = path
         self.path.write_text("")       # start fresh each run
-        self._stack: list[dict] = []   # spans currently open; the last one is the parent
+        # Spans currently open; the last one is the parent. A ContextVar so that
+        # each thread has its OWN stack - with one shared list, parallel runs
+        # would become each other's parents. (OpenTelemetry does exactly this.)
+        self._stack: ContextVar[tuple] = ContextVar("span_stack", default=())
+        self._lock = threading.Lock()  # guards the file + finished list
         self.finished: list[dict] = []
 
     @contextmanager
@@ -83,7 +92,8 @@ class Tracer:
                 s["attributes"]["ok"] = True   # add facts learned during the work
         A span opened inside another span's `with` block becomes its child.
         """
-        parent = self._stack[-1] if self._stack else None
+        stack = self._stack.get()
+        parent = stack[-1] if stack else None
         s = {
             # Root span starts a new trace; children inherit its trace_id.
             "trace_id": parent["trace_id"] if parent else uuid.uuid4().hex,
@@ -94,7 +104,7 @@ class Tracer:
             "attributes": dict(attributes),
             "status": "ok",
         }
-        self._stack.append(s)
+        token = self._stack.set(stack + (s,))  # push (for this thread only)
         try:
             yield s
         except Exception as e:
@@ -102,15 +112,17 @@ class Tracer:
             s["attributes"]["error"] = f"{type(e).__name__}: {e}"
             raise
         finally:
-            self._stack.pop()
+            self._stack.reset(token)              # pop
             s["end"] = time.time()
             s["duration_ms"] = round((s["end"] - s["start"]) * 1000, 1)
             # Written when the span ENDS, so children land in the file before
             # their parent - same as real OTel exporters. Rebuild the tree from
             # parent_id, not from line order.
-            self.finished.append(s)
-            with self.path.open("a") as f:
-                f.write(json.dumps(s, default=str) + "\n")
+            line = json.dumps(s, default=str) + "\n"
+            with self._lock:
+                self.finished.append(s)
+                with self.path.open("a") as f:
+                    f.write(line)
 
 
 def render_trace(spans: list[dict], trace_id: str) -> list[str]:

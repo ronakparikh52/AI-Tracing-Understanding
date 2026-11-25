@@ -3,7 +3,9 @@
 Install:  pip install "psycopg[binary]"
 """
 import os
+import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 import psycopg
@@ -17,13 +19,18 @@ DSN = os.environ.get(
 
 # Which database query()/execute()/connect() talk to. Defaults to `minibank`
 # (steps 1-6). Step 7 points it at a per-run branch with use_database().
-_active_dsn = DSN
+#
+# A ContextVar, not a plain global: each THREAD gets its own value. With a
+# global, 10 parallel runs would share one pointer and the last use_database()
+# would win - run A's refund could land in run B's database. (Like a global,
+# but every thread / asyncio task has its own copy.)
+_active_dsn: ContextVar[str] = ContextVar("active_dsn", default=DSN)
 
 
 @contextmanager
 def connect():
     # One short-lived connection per call: simple and fine for a sandbox.
-    with psycopg.connect(_active_dsn, row_factory=dict_row) as conn:
+    with psycopg.connect(_active_dsn.get(), row_factory=dict_row) as conn:
         yield conn
 
 
@@ -72,12 +79,10 @@ def dsn_for(dbname: str) -> str:
 def use_database(dbname: str) -> None:
     """Point query()/execute()/connect() at another database (e.g. a branch).
 
-    A module-level switch is fine because runs are sequential. Running agents in
-    parallel threads would need a contextvars.ContextVar instead, so each thread
-    sees its own branch.
+    Only affects the CURRENT thread (see _active_dsn above), so parallel runs
+    each stay on their own branch.
     """
-    global _active_dsn
-    _active_dsn = dsn_for(dbname)
+    _active_dsn.set(dsn_for(dbname))
 
 
 def _admin(sql: str) -> None:
@@ -99,10 +104,17 @@ def build_template() -> None:
         conn.commit()
 
 
+# Postgres rejects a clone while another session is touching the template, and
+# simultaneous clones of one template can trip over each other. A clone takes
+# milliseconds, so doing them one at a time costs nothing and removes the race.
+_clone_lock = threading.Lock()
+
+
 def branch_db(name: str) -> None:
     """Clone the template into a fresh database called `name`."""
     _admin(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
-    _admin(f"CREATE DATABASE {name} TEMPLATE {TEMPLATE_DB}")
+    with _clone_lock:
+        _admin(f"CREATE DATABASE {name} TEMPLATE {TEMPLATE_DB}")
 
 
 def drop_branch(name: str) -> None:

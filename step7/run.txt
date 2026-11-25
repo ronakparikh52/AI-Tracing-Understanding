@@ -1,0 +1,27 @@
+# step7/run.txt - run at 2026-11-23 23:45:39
+
+haiku  clean                run  1/20  PASS  $0.00048
+haiku  clean                run  2/20  PASS  $0.00036
+haiku  clean                run  3/20  PASS  $0.00041
+haiku  clean                run  4/20  PASS  $0.00032
+haiku  clean                run  5/20  PASS  $0.00032
+haiku  clean                run  6/20  PASS  $0.00034
+haiku  clean                run  7/20  PASS  $0.00037
+haiku  clean                run  8/20  PASS  $0.00030
+haiku  clean                run  9/20  PASS  $0.00039
+haiku  clean                run 10/20  PASS  $0.00036
+haiku  clean                run 11/20  PASS  $0.00026
+haiku  clean                run 12/20  FAIL  $0.00036  DB expected {'acct 1 balance': 54900, 'txn 1 status': 'refunded'}, got {no change}
+haiku  clean                run 13/20  PASS  $0.00035
+haiku  clean                run 14/20  PASS  $0.00034
+haiku  clean                run 15/20  PASS  $0.00039
+haiku  clean                run 16/20  PASS  $0.00030
+haiku  clean                run 17/20  PASS  $0.00033
+haiku  clean                run 18/20  PASS  $0.00028
+haiku  clean                run 19/20  PASS  $0.00038
+haiku  clean                run 20/20  PASS  $0.00033
+haiku  flight               run  1/20  PASS  $0.00034
+haiku  flight               run  2/20  PASS  $0.00031
+haiku  flight               run  3/20  PASS  $0.00031
+haiku  flight               run  4/20  PASS  $0.00035
+haiku  flight               run  5/20  PASS  $0.00035
